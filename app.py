@@ -46,7 +46,9 @@ def get_video_summary(subs):
         idx = 0
     blob = [prep_comment(i)  for i in subs[idx:]]
     prompt = '\n'.join(blob)
-    api_key = requests.get("https://minisatip.org/tmp/api").content.decode("utf-8").strip()
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if api_key is None:
+        return None
     client = OpenAI(api_key=api_key)
 
     print(f"Getting summary using index {idx}")
