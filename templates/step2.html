@@ -1,0 +1,32 @@
+<html><head><title>Videos</title>
+<style> 
+.wrapper {
+    margin-right: 70px;
+    margin-top: .5ex;
+}
+checkbox {
+    width: 100%;
+    height: 80%;
+}
+button {
+    float: right;
+}
+</style>
+</head>
+<body>
+<h3><label>Select the begining and the end sentence of the video and click Generate button: {{ video_name }}</label></h3>
+<h3><label>Ensure only 2 checkboxes are selected. No need to download the file if you do not want to edit/publish it</label></h3><br><br>
+
+{{ summary | safe }}
+
+<p style="font-size:30px">
+
+<form action="/generate" method="post">
+{% for s in subtitles %}
+    <input type="checkbox" name="subtitles" value="{{ s['label'] }}">
+    <label for="{{ s['label'] }}"> {{ s["text"] | safe }} </label><br>
+{% endfor %}
+<br>
+<input type="hidden" name="video" value="{{ video_id }}"><br><br><b><input type="submit" value="Generate"></b>
+</form>
+</p></body></html>

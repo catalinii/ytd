@@ -1,0 +1,17 @@
+<html><head><title>Videos</title>
+
+</head>
+<body><p style="font-size:30px">
+
+<b><h2><label>Select Youtube Video</label></h2></b><br>
+
+{% for video_id, c in CONFIG.items(): %}
+<a href="/step2?video={{ video_id }}"><b>{{c.name}} on {{ c.publish_date.strftime('%Y-%m-%d') }}</b></a><br>
+{% endfor %}
+<br><br>
+<form action="/new" method="post">
+<h2><label>Enter a new youtube URL to import a new video:</label></h2>
+<br><input type="text" name="video"><br><br>
+<input type="submit" value="Download Video">
+</form>
+</p></body></html>

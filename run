@@ -1,0 +1,6 @@
+pip3 install youtube_transcript_api openai pytube
+apt-get -y install python3-flask
+curl https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp --output /usr/bin/yt-dlp -L && chmod 755 /usr/bin/yt-dlp
+cd $(dirname $(realpath $0))
+pwd
+nohup flask run &
