@@ -1,6 +1,7 @@
 import os
 import argparse
 import subprocess
+import time
 import traceback
 from indexer import index_video, collection # Import collection to allow cleaning
 
@@ -20,13 +21,16 @@ def reindex(playlist_url=None, clean_db=False):
     if playlist_url:
         print(f"Fetching video URLs from playlist: {playlist_url}")
         cmd = ["yt-dlp", "--flat-playlist", "--print", "url", playlist_url]
+        start_time = time.time()
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             video_urls = result.stdout.strip().split('\n')
+            number = 0
             for url in video_urls:
+                number += 1
                 if url:
                     video_id = get_video_id(url)
-                    print(f"Indexing video from playlist: {video_id}")
+                    print(f"{number}/{len(video_urls)}: Indexing video from playlist: {video_id}")
                     try:
                         index_video(video_id)
                     except Exception as e:

@@ -140,7 +140,7 @@ def search():
     answer, context = search_and_answer(query)
     sources_html = context.replace("\n","\n<br>")
     answer = markdown2.markdown(answer)
-    return answer
+    return f'<h3>Answer:</h3>{answer}<br><hr><br><form action="/search" method="post"><h2><label>Search in videos:</label></h2><br><input type="text" name="query" style="width: 300px;"><br><br><input type="submit" value="Search"></form>'
     return f"<h3>Answer:</h3>{answer}<br><br><h3>Sources:</h3>{sources_html}"
 
 @app.route('/step2', methods=['GET'])

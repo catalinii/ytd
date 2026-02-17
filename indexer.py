@@ -13,7 +13,7 @@ from chromadb.utils import embedding_functions
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from youtube_transcript_api import YouTubeTranscriptApi
 
-CHROMA_PATH = "index"
+CHROMA_PATH = "chroma_index"
 COLLECTION_NAME = "video_subtitles_free"
 
 REELS_ASK = """
@@ -29,10 +29,10 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
 default_ef = embedding_functions.DefaultEmbeddingFunction()
 collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME, embedding_function=default_ef)
 
-def get_openai_completion(messages, model="gpt-4o"):
+def get_openai_completion(messages, model="gpt-5-mini"):
     api_key = os.environ.get('OPENAI_API_KEY')
     if not api_key:
-        return "OpenAI API Key not found."
+        raise Exception("OpenAI API Key not found:  https://openai.com/")
     client = OpenAI(api_key=api_key, http_client=httpx.Client())
     completion = client.chat.completions.create(
         model=model,
@@ -40,10 +40,10 @@ def get_openai_completion(messages, model="gpt-4o"):
     )
     return completion.choices[0].message.content
 
-def get_gemini_completion(messages, model="gemini-1.5-flash"):
+def get_gemini_completion(messages, model="gemini-3-flash-preview"):
     api_key = os.environ.get('GEMINI_API_KEY')
     if not api_key:
-        return "Gemini API Key not found."
+        raise Exception("Gemini API Key not found: https://aistudio.google.com/")
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     
@@ -82,6 +82,8 @@ def get_completion(messages, model=None):
 def get_video_title_and_date(video_id):
     """Infers video title using YouTube API or yt-dlp."""
     api_key = os.environ.get("APIKEY")
+    if api_key is None:
+        raise Exception("Google APIKEY is required https://developers.google.com/youtube/v3/getting-started")
     if api_key:
         try:
             params = {'id': video_id, 'key': api_key, 'part': 'snippet'}
@@ -238,10 +240,10 @@ def search_and_answer(query, n_results=10):
             meta = results['metadatas'][0][i]
             context += f"From video '{meta['video_title']}' ({meta['url']}) on '{meta.get('date')}':\n{doc}\n\n"
     
-    prompt = f"Using the following snippets answer the user's question: {query} by summarizing the content from the transcripts. Once done include the urls as references at the bottom, but do not include in the summary. Also geberate markdown answer. Get the answer from the first 5 transcripts and use the remaining ones only if really needed. Convert all the URLs into links \n\nTranscripts:\n{context}"
+    prompt = f"Using the following snippets answer the user's question: {query} by summarizing the content from the transcripts. Once done include the urls as references at the bottom including the date they were done, but do not include in the summary. Also geberate markdown answer. Get the answer from the first 5 transcripts and use the remaining ones only if really needed. Convert all the URLs into links. Follow up with 3 questions on simple topics after the references section. \n\nTranscripts:\n{context}"
     
     messages = [
-        {"role": "system", "content": "You are a helpful assistant answering questions based on video transcripts. Always include the source video titles in your answer."},
+        {"role": "system", "content": "You are a helpful assistant answering questions based on video transcripts"},
         {"role": "user", "content": prompt}
     ]
     

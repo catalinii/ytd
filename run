@@ -3,5 +3,5 @@ apt-get -y install python3-flask ffmpeg
 curl https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp --output /usr/bin/yt-dlp -L && chmod 755 /usr/bin/yt-dlp
 cd $(dirname $(realpath $0))
 pwd
-nohup flask run  --host=192.168.5.7 &
+nohup flask run &
 
