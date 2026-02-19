@@ -13,8 +13,29 @@ from pprint import pprint
 import markdown2
 
 import requests
-from indexer import index_video, collection, get_video_summary, search_and_answer
+from indexer import index_video, collection, search_and_answer, get_video_summary
 
+VIDEO_PATH = "videos"
+SAVED_PATH = "data/"
+
+def run_command(cmd):
+    out = ""
+    err = ""
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    while process.returncode is None:
+        try:
+            outb, errb = process.communicate(timeout=1)
+            out = outb.decode('utf-8').replace("\n","<br>\n")
+            err = errb.decode('utf-8').replace("\n","<br>\n")
+        except subprocess.TimeoutExpired as e:
+            if e.output:
+                outs = e.output.decode('utf-8').strip()
+                print(outs.split('\n')[-1])
+            if e.stderr:
+                errs = e.stderr.decode('utf-8').strip()
+                print(errs.split('\n')[-1])
+    
+    return process.returncode, out, err        
 
 class ConfigItem:
     def __init__(self, d):
