@@ -8,6 +8,10 @@ checkbox {
     width: 100%;
     height: 80%;
 }
+body {
+	background-color: black;
+	color: white;
+}
 button {
     float: right;
 }
@@ -21,10 +25,11 @@ button {
 
 <p style="font-size:30px">
 
-<form action="/generate" method="post">
+<form action="/generate" method="get">
 {% for s in subtitles %}
-    <input type="checkbox" name="subtitles" value="{{ s['label'] }}">
-    <label for="{{ s['label'] }}"> {{ s["text"] | safe }} </label><br>
+    {{ s["href"] | safe }}
+    <input type="checkbox" name="subtitles" id="{{ s['label'] }}" value="{{ s['label'] }}">
+    <label for="{{ s['label'] }}"> {{ s["text"] | safe }} </label>{{s["br"] | safe}}
 {% endfor %}
 <br>
 <input type="hidden" name="video" value="{{ video_id }}"><br><br><b><input type="submit" value="Generate"></b>

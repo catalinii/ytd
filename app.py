@@ -7,6 +7,7 @@ import subprocess
 from flask import Flask, render_template, request, send_from_directory
 from pathlib import Path
 import json
+import sys
 import time
 import whisper
 from pprint import pprint
@@ -40,27 +41,6 @@ def run_command(cmd):
 class ConfigItem:
     def __init__(self, d):
         self.__dict__.update(d)
-
-class YoutubeVideo:
-    def __init__(self, id):
-        params = {'id': id, 'key': os.environ.get("APIKEY"),
-                'part': 'snippet,statistics'}
-
-        url = 'https://www.googleapis.com/youtube/v3/videos'
-
-        query_string = urllib.parse.urlencode(params)
-        url = url + "?" + query_string
-
-        with urllib.request.urlopen(url) as response:
-            response_text = response.read()
-            data = json.loads(response_text.decode())
-
-        self.id = id
-        self.publish_date = data['items'][0]['snippet']['publishedAt']
-        self.title = data['items'][0]['snippet']['title']
-
-
-
 
 def load_config():
     out = {}
@@ -140,19 +120,19 @@ def new():
     print(f"Completed running command {cmd} with exit code {rc}")
     subtitles = get_subtitles(out_location)
     summary = get_video_summary(subtitles)
-    video = YoutubeVideo(video_id)
+    video_title, video_publish_date = get_video_title_and_date(video_id)
     out = "<html><title>Downloaded Youtube Video</title><body>\n"
     out += f"Completed downloading video {video_id}: {video.title} on {video.publish_date}"
     out += "</body></html>"
     CONFIG[video_id] = ConfigItem({
         "file": out_location,
-        "name": video.title,
-        "publish_date": video.publish_date,
+        "name": video_title,
+        "publish_date": video_publish_date,
         "subtitles": subtitles,
         "summary": summary,
     })
     save_config()
-    index_video(video_id, subtitles, video.title)
+    index_video(video_id, subtitle)
     return out
 
 @app.route('/search', methods=['POST'])
@@ -206,7 +186,8 @@ def step2():
         vals.append(v)
         oldbr = br == "<br>"
 
-    return render_template('step2.html', subtitles=vals, video_id=video_id, video_name = video_config.name, summary = video_config.summary)
+    print(vals, file=sys.stderr)
+    return render_template('step2.html', subtitles=vals, video_id=video_id, video_name = video_config.name, summary = markdown2.markdown(video_config.summary))
 
 @app.route('/generate', methods=['GET'])
 def generate():
