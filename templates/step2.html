@@ -9,8 +9,12 @@ checkbox {
     height: 80%;
 }
 body {
-	background-color: light-dark(black, white);
-	color: light-dark(white, black);
+	background-color: white;
+	color: black;
+}
+body.night {
+	background-color: black;
+	color: white;
 }
 button {
     float: right;
@@ -34,4 +38,16 @@ button {
 <br>
 <input type="hidden" name="video" value="{{ video_id }}"><br><br><b><input type="submit" value="Generate"></b>
 </form>
-</p></body></html>
+</p>
+<script>
+function applyTimeBasedTheme() {
+	const hour = new Date().getHours();
+	if (hour >= 7 && hour < 23) {
+		document.body.classList.remove('night');
+	} else {
+		document.body.classList.add('night');
+	}
+}
+applyTimeBasedTheme();
+</script>
+</body></html>
