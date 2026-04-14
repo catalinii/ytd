@@ -14,7 +14,7 @@ from pprint import pprint
 import markdown2
 
 import requests
-from indexer import index_video, collection, search_and_answer, get_video_summary
+from indexer import index_video, collection, search_and_answer, get_video_summary, get_video_title_and_date
 
 VIDEO_PATH = "videos"
 SAVED_PATH = "data/"
@@ -118,11 +118,11 @@ def new():
     if rc != 0:
         return f"Command {cmd} failed:\n{out}\n{err}",503
     print(f"Completed running command {cmd} with exit code {rc}")
+    video_title, video_publish_date = get_video_title_and_date(video_id)
     subtitles = get_subtitles(out_location)
     summary = get_video_summary(subtitles)
-    video_title, video_publish_date = get_video_title_and_date(video_id)
     out = "<html><title>Downloaded Youtube Video</title><body>\n"
-    out += f"Completed downloading video {video_id}: {video.title} on {video.publish_date}"
+    out += f"Completed downloading video {video_id}: {video_title} on {video_publish_date}"
     out += "</body></html>"
     CONFIG[video_id] = ConfigItem({
         "file": out_location,
@@ -132,7 +132,7 @@ def new():
         "summary": summary,
     })
     save_config()
-    index_video(video_id, subtitle)
+    index_video(video_id, subtitles)
     return out
 
 @app.route('/search', methods=['POST'])
