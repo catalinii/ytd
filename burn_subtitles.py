@@ -419,6 +419,104 @@ def draw_caption(pil_img, phrase, t, font_base, font_big,
     return pil_img
 
 
+# ------------------------------------------------- reusable entry point
+# (imported by app.py so /generate can produce the captioned square cut
+# in the same request; the CLI main() below is a thin wrapper around it).
+
+def render_captioned_square(video_path, words, output_path, max_words=4,
+                            font_size=58, font_path=None, emphasize_scale=1.3,
+                            min_emphasize_len=7, extra_set=None,
+                            enable_emphasize=True, sample_every=5,
+                            use_yolo=False):
+    """Burn karaoke captions into a 1:1 speaker-following crop.
+
+    video_path: cut clip to process (audio is muxed from here).
+    words: list of {"start","end","text"} in CUT-relative seconds.
+    output_path: where to write the captioned square mp4.
+    extra_set: important-words set; None selects DEFAULT_IMPORTANT_WORDS.
+    Returns output_path. Raises ValueError/SystemExit on failure.
+    """
+    if not words:
+        raise ValueError("no subtitles in cut range")
+    if extra_set is None:
+        extra_set = DEFAULT_IMPORTANT_WORDS
+        print(f"[font] default important-words ({len(extra_set)}): "
+              f"{', '.join(sorted(extra_set))}", flush=True)
+    phrases = group_phrases(words, max_words=max_words)
+    print(f"[info] {len(phrases)} caption phrases (max {max_words} words each)",
+          flush=True)
+
+    raw_yolo = try_yolo_centers(video_path, sample_every) if use_yolo else None
+    raw, idxs, n_frames, W, H, fps = detect_centers_haar(
+        video_path, sample_every)
+    if raw_yolo is not None and len(raw_yolo) == len(raw):
+        # fuse: prefer YOLO person center, fall back to Haar face
+        raw = [y if y is not None else h for y, h in zip(raw_yolo, raw)]
+        print("[track] fused YOLO person + Haar face", flush=True)
+    n_det = sum(1 for v in raw if v is not None)
+    print(f"[track] Haar face detections: {n_det}/{len(raw)} over {n_frames} frames "
+          f"({W}x{H} @ {fps:.1f}fps)", flush=True)
+
+    crop_s = min(W, H)
+    x0_traj = build_crop_trajectory(n_frames, W, crop_s, raw, idxs,
+                                    sample_every)
+    print(f"[track] square crop {crop_s}x{crop_s}, x0 range "
+          f"[{int(x0_traj.min())},{int(x0_traj.max())}]", flush=True)
+
+    font_base, font_big = load_fonts(font_size,
+                                     emphasize_scale=emphasize_scale,
+                                     font_path=font_path)
+    cap = cv2.VideoCapture(video_path)
+    tmp_fd, tmp_silent = tempfile.mkstemp(suffix="_silent.mp4")
+    os.close(tmp_fd)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(tmp_silent, fourcc, fps, (crop_s, crop_s))
+    if not out.isOpened():
+        raise SystemExit("cannot open VideoWriter")
+    fi = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            break
+        t = fi / fps
+        x0 = int(x0_traj[fi]) if fi < len(x0_traj) else int(x0_traj[-1])
+        crop = frame[0:crop_s, x0:x0 + crop_s]
+        if crop.shape[1] != crop_s or crop.shape[0] != crop_s:
+            crop = cv2.resize(crop, (crop_s, crop_s))
+        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb)
+        phrase = find_active(phrases, t)
+        if phrase is not None:
+            pil = draw_caption(pil, phrase, t, font_base, font_big,
+                               min_emphasize_len=min_emphasize_len,
+                               extra_set=extra_set,
+                               enable_emphasize=enable_emphasize)
+        back = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+        out.write(back)
+        fi += 1
+        if fi % 150 == 0:
+            print(f"[render] {fi}/{n_frames} frames", flush=True)
+    cap.release()
+    out.release()
+    print(f"[render] wrote {fi} frames -> {tmp_silent}", flush=True)
+
+    cmd = ["ffmpeg", "-y", "-i", tmp_silent, "-i", video_path,
+           "-map", "0:v", "-map", "1:a?",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+           "-preset", "medium", "-c:a", "aac", "-shortest", output_path]
+    print("[mux] " + " ".join(cmd), flush=True)
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(r.stderr[-3000:], flush=True)
+        raise SystemExit("ffmpeg mux failed")
+    try:
+        os.remove(tmp_silent)
+    except OSError:
+        pass
+    print(f"[done] {output_path}", flush=True)
+    return output_path
+
+
 # ------------------------------------------------------------------ main
 
 def main():
@@ -475,93 +573,24 @@ def main():
         raise SystemExit("no subtitles in cut range - check offset/video-id")
     print(f"[info] first: {words[0]}", flush=True)
     print(f"[info] last:  {words[-1]}", flush=True)
-    phrases = group_phrases(words, max_words=args.max_words)
-    print(f"[info] {len(phrases)} caption phrases (max {args.max_words} words each)",
-          flush=True)
-
-    # ---- speaker trajectory
-    raw_yolo = None if args.no_yolo else try_yolo_centers(video_path, args.sample_every)
-    raw, idxs, n_frames, W, H, fps = detect_centers_haar(
-        video_path, args.sample_every)
-    if raw_yolo is not None and len(raw_yolo) == len(raw):
-        # fuse: prefer YOLO person center, fall back to Haar face
-        raw = [y if y is not None else h for y, h in zip(raw_yolo, raw)]
-        print("[track] fused YOLO person + Haar face", flush=True)
-    n_det = sum(1 for v in raw if v is not None)
-    print(f"[track] Haar face detections: {n_det}/{len(raw)} over {n_frames} frames "
-          f"({W}x{H} @ {fps:.1f}fps)", flush=True)
-
-    crop_s = min(W, H)  # 720 for 1280x720 landscape
-    x0_traj = build_crop_trajectory(n_frames, W, crop_s, raw, idxs,
-                                    args.sample_every)
-    print(f"[track] square crop {crop_s}x{crop_s}, x0 range "
-          f"[{int(x0_traj.min())},{int(x0_traj.max())}]", flush=True)
-
-    # ---- render
-    font_base, font_big = load_fonts(args.font_size,
-                                     emphasize_scale=args.emphasize_scale,
-                                     font_path=args.font)
     if args.important_words:
         extra_set = ({w.strip().lower() for w in args.important_words.split(",")
                       if w.strip()} or None)
         print(f"[font] custom --important-words: {sorted(extra_set or [])}", flush=True)
     else:
-        extra_set = DEFAULT_IMPORTANT_WORDS
-        print(f"[font] default important-words ({len(extra_set)}): "
-              f"{', '.join(sorted(extra_set))}", flush=True)
+        extra_set = None  # render_captioned_square() selects DEFAULT_IMPORTANT_WORDS
     enable_emphasize = (not args.no_emphasize) and args.emphasize_scale > 1.0
-    cap = cv2.VideoCapture(video_path)
-    tmp_fd, tmp_silent = tempfile.mkstemp(suffix="_silent.mp4")
-    os.close(tmp_fd)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(tmp_silent, fourcc, fps, (crop_s, crop_s))
-    if not out.isOpened():
-        raise SystemExit("cannot open VideoWriter")
-    fi = 0
-    while True:
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            break
-        t = fi / fps
-        x0 = int(x0_traj[fi]) if fi < len(x0_traj) else int(x0_traj[-1])
-        crop = frame[0:crop_s, x0:x0 + crop_s]
-        if crop.shape[1] != crop_s or crop.shape[0] != crop_s:
-            crop = cv2.resize(crop, (crop_s, crop_s))
-        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-        pil = Image.fromarray(rgb)
-        phrase = find_active(phrases, t)
-        if phrase is not None:
-            pil = draw_caption(pil, phrase, t, font_base, font_big,
-                               min_emphasize_len=args.min_emphasize_len,
-                               extra_set=extra_set,
-                               enable_emphasize=enable_emphasize)
-        back = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-        out.write(back)
-        fi += 1
-        if fi % 150 == 0:
-            print(f"[render] {fi}/{n_frames} frames", flush=True)
-    cap.release()
-    out.release()
-    print(f"[render] wrote {fi} frames -> {tmp_silent}", flush=True)
 
     if args.output is None:
         root, _ = os.path.splitext(video_path)
         args.output = root + "_square_captioned.mp4"
-    # mux original audio
-    cmd = ["ffmpeg", "-y", "-i", tmp_silent, "-i", video_path,
-           "-map", "0:v", "-map", "1:a?",
-           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
-           "-preset", "medium", "-c:a", "aac", "-shortest", args.output]
-    print("[mux] " + " ".join(cmd), flush=True)
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        print(r.stderr[-3000:], flush=True)
-        raise SystemExit("ffmpeg mux failed")
-    try:
-        os.remove(tmp_silent)
-    except OSError:
-        pass
-    print(f"[done] {args.output}", flush=True)
+    render_captioned_square(
+        video_path, words, args.output, max_words=args.max_words,
+        font_size=args.font_size, font_path=args.font,
+        emphasize_scale=args.emphasize_scale,
+        min_emphasize_len=args.min_emphasize_len, extra_set=extra_set,
+        enable_emphasize=enable_emphasize,
+        sample_every=args.sample_every, use_yolo=not args.no_yolo)
 
 
 if __name__ == "__main__":

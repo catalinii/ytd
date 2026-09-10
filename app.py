@@ -216,9 +216,48 @@ def generate():
     if rc != 0:
         return f"Command {cmd} failed:\n{out}\n{err}",503
 
+    # Produce the 1:1 speaker-following captioned version with the
+    # shared burn_subtitles renderer (Libre Baskerville, karaoke highlight).
+    # Only the captioned file is stored; the plain cut is an intermediate
+    # used as render input and removed on success.
+    try:
+        from burn_subtitles import render_captioned_square
+        words = []
+        for sub in video_config.subtitles:
+            try:
+                s = float(sub['start'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if "end" in sub:
+                e = float(sub['end'])
+            elif "duration" in sub:
+                e = s + float(sub['duration'])
+            else:
+                continue
+            if e < start or s > end:
+                continue
+            text = str(sub.get('text', '')).strip()
+            if not text:
+                continue
+            words.append({"start": max(s - start, 0.0), "end": e - start,
+                          "text": text})
+        words.sort(key=lambda w: w["start"])
+        square_file = f"{video_id}_{start}_{end}_square_captioned.mp4"
+        square_location = os.path.join(SAVED_PATH, square_file)
+        render_captioned_square(out_location, words, square_location)
+        os.remove(out_location)
+    except Exception as ex:
+        print(f"Square captioned render failed: {ex}")
+        out = "<html><head><title>download file</title></head>"
+        out += '<body><p style="font-size:30px">'
+        out += f'<a href="download/{out_file}" download target="_blank">DOWNLOAD</a>'
+        out += f"<br>Square captioned version failed: {ex}"
+        out += '</p></body></html>'
+        return out
+
     out = "<html><head><title>download file</title></head>"
     out += '<body><p style="font-size:30px">'
-    out += f'<a href="download/{out_file}" download target="_blank">DOWNLOAD</a>'
+    out += f'<a href="download/{square_file}" download target="_blank">DOWNLOAD</a>'
     out += '</p></body></html>'
     return out
 
