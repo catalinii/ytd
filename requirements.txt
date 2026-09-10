@@ -1,0 +1,37 @@
+# Consolidated Python dependencies.
+# Install with: venv/bin/pip install -r requirements.txt
+# (System packages like ffmpeg, plus the yt-dlp binary, are still
+# handled by ./run via apt/curl.)
+#
+# Packages below marked "(from ./run)" were previously installed by the
+# ad-hoc `pip install ...` line in ./run and are now pinned here so a
+# fresh venv is reproducible with a single file.
+
+# --- web app + indexing (app.py, indexer.py; from ./run) ---
+flask
+requests
+httpx
+markdown2
+youtube_transcript_api
+openai
+pytube
+backoff
+openai-whisper
+google-genai
+chromadb
+langchain
+langchain-text-splitters
+
+# --- square-crop + karaoke subtitle burning (burn_subtitles.py) ---
+# NOTE: opencv 5.x removed CascadeClassifier/HOG used for speaker
+# tracking, so pin the 4.x line. It was built against NumPy 1.x, hence
+# the matching upper bound below.
+opencv-python==4.8.1.78
+Pillow>=10.0.0
+numpy>=1.24,<2
+pyyaml>=6.0
+
+# Optional (better person tracking). Uncomment to use YOLOv8 person
+# following instead of / in addition to Haar face tracking.
+# Note: pulls in torch (~800MB CPU wheel).
+# ultralytics>=8.2.0

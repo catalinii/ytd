@@ -1,7 +1,13 @@
-pip3 install youtube_transcript_api openai pytube backoff openai-whisper google-genai chromadb langchain langchain-text-splitters markdown2
-apt-get -y install python3-flask ffmpeg
+#!/usr/bin/env bash
+set -e
+cd "$(dirname "$(realpath "$0")")"
+if [ ! -x venv/bin/python ]; then
+  python3 -m venv venv
+fi
+venv/bin/pip install --upgrade pip
+venv/bin/pip install -r requirements.txt
+apt-get -y install ffmpeg
 curl https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp --output /usr/bin/yt-dlp -L && chmod 755 /usr/bin/yt-dlp
-cd $(dirname $(realpath $0))
 pwd
-nohup flask run &
+nohup venv/bin/flask run --host 0.0.0.0 &
 
