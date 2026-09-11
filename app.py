@@ -234,7 +234,10 @@ def generate():
                 e = s + float(sub['duration'])
             else:
                 continue
-            if e < start or s > end:
+            if e <= start + 1e-6 or s >= end - 1e-6:
+                # zero overlap with the cut: "life."-type words ending
+                # exactly at `start` (or starting exactly at `end`) have
+                # no audio inside the clip, so they must not be captioned
                 continue
             text = str(sub.get('text', '')).strip()
             if not text:

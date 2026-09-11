@@ -71,13 +71,17 @@ def load_words(config_path, video_id, offset, cut_end=None):
         if not text:
             continue
         # keep words overlapping the cut [0, cut_end] (cut_end=None => no upper bound)
-        if end < 0:
+        # NOTE: strict inequalities would keep zero-overlap words sitting
+        # exactly on the boundary (e.g. "life." ending exactly at the cut
+        # start); those have no audio inside the clip.
+        if end <= 1e-6:
             continue
         if start < -0.5:
             continue
-        if cut_end is not None and start > cut_end + 0.04:
-            # one-frame tolerance only; the cut ends exactly at the last
-            # word end, the next word starts after the cut
+        if cut_end is not None and start >= cut_end - 1e-6:
+            # word starts at/after the cut end: no audio inside the clip
+            # (a word starting exactly at the end has zero overlap; eps
+            # covers float dust only; cut_end is the probed duration)
             continue
         words.append({"start": start, "end": end, "text": text})
     words.sort(key=lambda w: w["start"])
