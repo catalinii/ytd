@@ -221,7 +221,7 @@ def generate():
     # Only the captioned file is stored; the plain cut is an intermediate
     # used as render input and removed on success.
     try:
-        from burn_subtitles import render_captioned_square
+        from burn_subtitles import render_captioned_square, apply_cut_start_case
         words = []
         for sub in video_config.subtitles:
             try:
@@ -242,6 +242,7 @@ def generate():
             words.append({"start": max(s - start, 0.0), "end": e - start,
                           "text": text})
         words.sort(key=lambda w: w["start"])
+        apply_cut_start_case(video_config.subtitles, words, start)
         square_file = f"{video_id}_{start}_{end}_square_captioned.mp4"
         square_location = os.path.join(SAVED_PATH, square_file)
         render_captioned_square(out_location, words, square_location)
