@@ -89,46 +89,32 @@ def load_words(config_path, video_id, offset, cut_end=None):
     for w in words:
         if w["start"] < 0:
             w["start"] = 0.0
-    apply_cut_start_case(subs, words, offset)
+    apply_cut_start_capital(subs, words)
     return words
 
 
-def apply_cut_start_case(all_subs, words, cut_start):
-    """Fix the first word's case when the cut starts mid-sentence.
+def apply_cut_start_capital(all_subs, words):
+    """Always capitalize the first letter of the cut's first word.
 
-    all_subs: subtitles in ORIGINAL timestamps (dicts with start plus
-      end and/or duration). words: cut-relative word list (modified in
-      place, also returned). cut_start: original timestamp of the cut.
-    If the subtitle right before the cut does not end a sentence, the cut
-    begins mid-sentence, so the first word's first letter is lowercased
-    (it is only capitalized in config.yaml because Whisper starts a new
-    segment there). Everything else keeps config.yaml casing untouched.
-    The pronoun "I" / "I'm" / ... is always kept capitalized.
+    all_subs: subtitles in ORIGINAL timestamps (only kept for signature
+      compatibility; the decision no longer depends on sentence context).
+    words: cut-relative word list (modified in place, also returned).
+    Every other letter keeps config.yaml casing untouched. If the first
+    word starts with punctuation/quotes, the first alphabetic character
+    is capitalized instead.
     """
     if not words:
         return words
-    prev_text = None
-    for s in all_subs:
-        try:
-            e = float(s["end"]) if "end" in s else float(s["start"]) + float(s["duration"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if e <= cut_start + 1e-9:
-            prev_text = str(s.get("text", ""))
-    if prev_text is None:
-        return words  # cut at the very beginning: keep as-is
-    if prev_text.strip()[-1:] in (".", "?", "!"):
-        return words  # previous sentence ended: keep as-is
     first = words[0]["text"]
-    if not first or not first[:1].isupper():
-        return words
-    lowered = first[:1].lower() + first[1:]
-    # pronoun I stays capitalized even mid-sentence
-    if lowered in ("i", "i'm", "i've", "i'll", "i'd") or lowered.startswith("i'm "):
-        return words
-    words[0]["text"] = lowered
-    print(f"[info] cut starts mid-sentence; first word {first!r} -> {lowered!r}",
-          flush=True)
+    chars = list(first)
+    for i, ch in enumerate(chars):
+        if ch.isalpha():
+            if ch.islower():
+                chars[i] = ch.upper()
+                words[0]["text"] = "".join(chars)
+                print("[info] first word %r -> %r (capitalized)"
+                      % (first, words[0]["text"]), flush=True)
+            return words
     return words
 
 
