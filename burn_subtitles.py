@@ -311,7 +311,12 @@ def build_crop_trajectory(n_frames, frame_w, crop_s, raw, idxs, sample_every):
 
 # ------------------------------------------------------------- rendering
 
-DEFAULT_FONT_PATH = "/root/saved/fonts/LibreBaskerville-Bold.ttf"
+# Fonts ship with the repo (fonts/ next to this file); resolve relative to
+# this file so it works wherever the repo is checked out
+# (/root/saved, /usr/src/saved, ...), not just one absolute path.
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_FONT_PATH = os.path.join(_BASE_DIR, "fonts", "LibreBaskerville-Bold.ttf")
+DEFAULT_FONT_REGULAR = os.path.join(_BASE_DIR, "fonts", "LibreBaskerville-Regular.ttf")
 
 def load_fonts(size, emphasize_scale=1.3, font_path=None):
     """Load (base, big) fonts. Big is used for important words."""
@@ -320,7 +325,7 @@ def load_fonts(size, emphasize_scale=1.3, font_path=None):
         candidates.append(font_path)
     candidates += [
         DEFAULT_FONT_PATH,
-        "/root/saved/fonts/LibreBaskerville-Regular.ttf",
+        DEFAULT_FONT_REGULAR,
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]
