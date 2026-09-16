@@ -390,7 +390,13 @@ def is_important(text, idx_in_phrase, min_len=7, extra_set=None):
 
 
 def wrap_linesMixed(word_items, max_width, draw):
-    """word_items: list of dicts {text, font, ...}. Greedy wrap, cap 2 lines."""
+    """word_items: list of dicts {text, font, ...}. Greedy wrap.
+
+    Returns ALL lines uncapped: dropping overflow lines here once silently
+    deleted the caption's first line (often the highlighted word), so the
+    caller (draw_caption) now shrinks fonts to fit and only ever drops
+    lines while keeping the active word visible.
+    """
     lines, cur, cur_w = [], [], 0
     # space width measured with base font (first item's font fallback)
     for it in word_items:
@@ -411,9 +417,30 @@ def wrap_linesMixed(word_items, max_width, draw):
         cur_w += add
     if cur:
         lines.append(cur)
-    if len(lines) > 2:
-        lines = lines[-2:]
     return lines
+
+
+MIN_BASE_FONT_SIZE = 40  # shrink-to-fit floor keeps captions mobile-readable
+
+
+def _scale_font(font, factor, floor):
+    """Return a size*factor copy of a TrueType font (same file).
+
+    Returns the SAME object when scaling is impossible (bitmap fallback)
+    or the floor is reached, so callers can detect it via identity.
+    """
+    try:
+        path = font.path
+        size = font.size
+    except AttributeError:
+        return font
+    new_size = max(floor, int(size * factor))
+    if new_size >= size:
+        return font
+    try:
+        return ImageFont.truetype(path, new_size)
+    except Exception:
+        return font
 
 
 def draw_caption(pil_img, phrase, t, font_base, font_big,
@@ -423,6 +450,9 @@ def draw_caption(pil_img, phrase, t, font_base, font_big,
 
     Important words (long / proper nouns / --important-words) are rendered
     with font_big (larger). Active word is yellow regardless of size.
+    Phrases that would wrap past 2 lines shrink both fonts to fit (down to
+    MIN_BASE_FONT_SIZE); as a last resort the kept 2-line window always
+    contains the active word, so it can never be silently dropped.
     """
     if phrase is None:
         return pil_img
@@ -431,13 +461,30 @@ def draw_caption(pil_img, phrase, t, font_base, font_big,
     words = [w["text"] for w in phrase["words"]]
     ai = active_word_index(phrase, t)
     max_width = int(W * max_width_ratio)
-    items = []
+    flags = []
     for i, w in enumerate(words):
         imp = (enable_emphasize and
                is_important(w, i, min_len=min_emphasize_len, extra_set=extra_set))
-        items.append({"text": w, "font": font_big if imp else font_base,
-                      "is_active": i == ai, "is_important": imp})
-    lines = wrap_linesMixed(items, max_width, draw)
+        flags.append((w, i == ai, imp))
+    cur_base, cur_big = font_base, font_big
+    lines = []
+    for _ in range(12):  # bounded shrink-to-fit loop
+        items = [{"text": w, "font": cur_big if imp else cur_base,
+                  "is_active": act, "is_important": imp}
+                 for (w, act, imp) in flags]
+        lines = wrap_linesMixed(items, max_width, draw)
+        if len(lines) <= 2:
+            break
+        nxt_base = _scale_font(cur_base, 0.94, MIN_BASE_FONT_SIZE)
+        nxt_big = _scale_font(cur_big, 0.94, int(MIN_BASE_FONT_SIZE * 1.3))
+        if nxt_base is cur_base and nxt_big is cur_big:
+            break
+        cur_base, cur_big = nxt_base, nxt_big
+    if len(lines) > 2:
+        ai_line = next((li for li, ln in enumerate(lines)
+                        if any(it["is_active"] for it in ln)), 0)
+        first_ln = max(0, min(ai_line, len(lines) - 2))
+        lines = lines[first_ln:first_ln + 2]
     # per-line heights (accommodate mixed sizes), 8px line gap
     line_heights, line_ascents = [], []
     for line in lines:
