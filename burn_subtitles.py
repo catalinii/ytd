@@ -501,6 +501,151 @@ def draw_caption(pil_img, phrase, t, font_base, font_big,
     return pil_img
 
 
+# ------------------------------------------- header banner / IG canvas
+# Instagram-ready canvas: the speaker-following square is kept intact and a
+# solid header strip is stacked on top for a persistent message (hook/CTA).
+#  - square / 1:1 : legacy 720x720, no header (default, unchanged behaviour)
+#  - 4:5        : 720x900  (header 180px) - max feed surface, recommended
+#                 for posts like "Free counseling for life problems"
+#  - 9:16       : 720x1280 (header ~336px + footer ~224px) - Reels/Stories
+# Captions are still drawn on the square video region first, then the
+# captioned square is pasted below the header, so caption position never
+# shifts into the banner.
+
+ASPECT_PRESETS = {
+    "square": (1, 1),
+    "1:1": (1, 1),
+    "4:5": (4, 5),
+    "4:6": (4, 6),
+    "9:16": (9, 16),
+}
+
+DEFAULT_HEADER_BG = (17, 24, 39)   # dark navy - high contrast, calm
+DEFAULT_HEADER_FG = (255, 255, 255)
+DEFAULT_ACCENT_FG = (255, 235, 0)  # same yellow as active caption word
+
+
+def parse_hex_color(value, default):
+    """Accept '#rrggbb', 'rrggbb', or 'r,g,b'. Returns (r, g, b)."""
+    if value is None:
+        return default
+    v = str(value).strip()
+    if "," in v:
+        try:
+            parts = [int(p.strip()) for p in v.split(",")]
+            if len(parts) == 3 and all(0 <= p <= 255 for p in parts):
+                return tuple(parts)
+        except ValueError:
+            return default
+        return default
+    v = v.lstrip("#")
+    if len(v) == 6:
+        try:
+            return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
+        except ValueError:
+            return default
+    return default
+
+
+def compute_canvas(crop_s, aspect="square", header_h=None, footer_h=None):
+    """Return (out_w, out_h, header_px, footer_px) for a square video.
+
+    crop_s: side of the speaker-following square (e.g. 720).
+    aspect: one of square|1:1|4:5|9:16.
+    header_h/footer_h: explicit overrides in square-crop pixels (None = preset).
+    """
+    key = str(aspect or "square").strip().lower().replace(" ", "")
+    if key not in ASPECT_PRESETS:
+        raise ValueError(f"unknown aspect {aspect!r}; "
+                         f"expected one of {sorted(ASPECT_PRESETS)}")
+    if key in ("square", "1:1"):
+        hh = int(header_h or 0)
+        fh = int(footer_h or 0)
+        if hh < 0 or fh < 0:
+            raise ValueError("header/footer heights must be >= 0")
+        return (crop_s, crop_s + hh + fh, hh, fh)
+    ar_w, ar_h = ASPECT_PRESETS[key]
+    total_h = int(round(crop_s * ar_h / ar_w))
+    extra = max(0, total_h - crop_s)
+    if header_h is not None or footer_h is not None:
+        hh = int(header_h or 0)
+        fh = int(footer_h if footer_h is not None else (extra - hh))
+        if hh < 0 or fh < 0 or hh + fh != extra:
+            raise ValueError(
+                f"header ({hh}) + footer ({fh}) must equal {extra} "
+                f"for {key} at width {crop_s}")
+        return (crop_s, crop_s + hh + fh, hh, fh)
+    if key == "9:16":
+        # Split the tall extra strip: roomy hook on top, clean footer below.
+        hh = int(round(extra * 0.6))
+        fh = extra - hh
+        return (crop_s, total_h, hh, fh)
+    # 4:5 etc: all extra space on top as the message banner.
+    return (crop_s, total_h, extra, 0)
+
+
+def _fit_header_font(text, bar_w, bar_h, font_path=None, start_size=64,
+                     floor=24, pad_x=36, pad_y=18):
+    """Pick the largest Bold font size so wrapped text fits bar_w x bar_h."""
+    from PIL import Image as _I, ImageDraw as _D
+    probe = _I.new("RGB", (bar_w, max(bar_h, 1)))
+    draw = _D.Draw(probe)
+    size = start_size
+    while True:
+        try:
+            font = (ImageFont.truetype(font_path or DEFAULT_FONT_PATH, size)
+                    if os.path.exists(font_path or DEFAULT_FONT_PATH)
+                    else ImageFont.load_default())
+        except Exception:
+            font = ImageFont.load_default()
+        max_w = bar_w - 2 * pad_x
+        words = str(text).split()
+        lines, cur = [], ""
+        for w_ in words:
+            trial = (cur + " " + w_).strip()
+            if cur and draw.textlength(trial, font=font) > max_w:
+                lines.append(cur)
+                cur = w_
+            else:
+                cur = trial
+        if cur:
+            lines.append(cur)
+        try:
+            asc, desc = font.getmetrics()
+            lh = asc + desc + 6
+        except Exception:
+            lh = size + 6
+        if len(lines) * lh <= max(1, bar_h - 2 * pad_y) or size <= floor:
+            return font, lines
+        size = max(floor, int(size * 0.92))
+        if size == floor:
+            # one final pass at floor size
+            continue
+
+
+def render_text_bar(bar_w, bar_h, text, font_path=None, bg=DEFAULT_HEADER_BG,
+                    fg=DEFAULT_HEADER_FG, start_size=64):
+    """Render a solid centered multi-line text bar (PIL Image)."""
+    bar = Image.new("RGB", (bar_w, max(bar_h, 1)), tuple(bg))
+    if not text or bar_h <= 0:
+        return bar
+    font, lines = _fit_header_font(text, bar_w, bar_h, font_path,
+                                   start_size=start_size)
+    draw = ImageDraw.Draw(bar)
+    try:
+        asc, desc = font.getmetrics()
+        lh = asc + desc + 6
+    except Exception:
+        lh = font.size + 6 if hasattr(font, "size") else 30
+    y = (bar_h - len(lines) * lh) / 2
+    for line in lines:
+        lw = draw.textlength(line, font=font)
+        draw.text(((bar_w - lw) / 2, y), line, font=font,
+                  fill=tuple(fg), stroke_width=2, stroke_fill=(0, 0, 0))
+        y += lh
+    return bar
+
+
 # ------------------------------------------------- reusable entry point
 # (imported by app.py so /generate can produce the captioned square cut
 # in the same request; the CLI main() below is a thin wrapper around it).
@@ -509,13 +654,28 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
                             font_size=58, font_path=None, emphasize_scale=1.3,
                             min_emphasize_len=7, extra_set=None,
                             enable_emphasize=True, sample_every=5,
-                            use_yolo=False):
+                            use_yolo=False, header_text="", aspect="square",
+                            header_height=None, footer_height=None,
+                            footer_text="", out_width=None,
+                            header_bg=None, header_fg=None):
     """Burn karaoke captions into a 1:1 speaker-following crop.
 
     video_path: cut clip to process (audio is muxed from here).
     words: list of {"start","end","text"} in CUT-relative seconds.
-    output_path: where to write the captioned square mp4.
+    output_path: where to write the captioned mp4.
     extra_set: important-words set; None selects DEFAULT_IMPORTANT_WORDS.
+    header_text: persistent banner message drawn in a strip ABOVE the
+      square video (e.g. "Free counseling for life problems - DM us").
+      Empty = no banner text (strip still added when aspect != square).
+    aspect: "square" (legacy 1:1), "4:5" (IG feed, recommended with a
+      header), or "9:16" (Reels/Stories: header + footer fill).
+    header_height/footer_height: explicit strip heights in crop pixels;
+      default follows the aspect preset. header+footer must equal the
+      preset extra height.
+    footer_text: optional small line in the 9:16 bottom strip.
+    out_width: upscale final canvas width (e.g. 1080 for Instagram).
+      Height scales proportionally. None = keep crop width (720).
+    header_bg/header_fg: banner colors as "#rrggbb" or "r,g,b".
     Returns output_path. Raises ValueError/SystemExit on failure.
     """
     if not words:
@@ -545,6 +705,41 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
     print(f"[track] square crop {crop_s}x{crop_s}, x0 range "
           f"[{int(x0_traj.min())},{int(x0_traj.max())}]", flush=True)
 
+    bg = parse_hex_color(header_bg, DEFAULT_HEADER_BG)
+    fg = parse_hex_color(header_fg, DEFAULT_HEADER_FG)
+    out_w, out_h, header_px, footer_px = compute_canvas(
+        crop_s, aspect=aspect, header_h=header_height,
+        footer_h=footer_height)
+    scale = 1.0
+    if out_width:
+        scale = float(out_width) / float(out_w)
+        out_w = int(out_width)
+        out_h = int(round(out_h * scale))
+        header_px = int(round(header_px * scale))
+        footer_px = int(round(footer_px * scale))
+        crop_s_out = int(round(crop_s * scale))
+        # libx264 yuv420p needs even dimensions; keep video region exact
+        # and absorb odd pixels into the footer/header fill.
+        if out_w % 2:
+            out_w -= 1
+        if out_h % 2:
+            out_h -= 1
+        if (header_px + crop_s_out + footer_px) != out_h:
+            footer_px = max(0, out_h - header_px - crop_s_out)
+    else:
+        crop_s_out = crop_s
+    print(f"[canvas] aspect={aspect} canvas={out_w}x{out_h} "
+          f"header={header_px}px footer={footer_px}px "
+          f"header_text={header_text!r}", flush=True)
+
+    header_bar = (render_text_bar(out_w, header_px, header_text,
+                                  font_path=font_path, bg=bg, fg=fg)
+                  if header_px > 0 else None)
+    footer_bar = (render_text_bar(out_w, footer_px, footer_text,
+                                  font_path=font_path, bg=bg, fg=fg,
+                                  start_size=44)
+                  if footer_px > 0 else None)
+
     font_base, font_big = load_fonts(font_size,
                                      emphasize_scale=emphasize_scale,
                                      font_path=font_path)
@@ -552,7 +747,7 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
     tmp_fd, tmp_silent = tempfile.mkstemp(suffix="_silent.mp4")
     os.close(tmp_fd)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(tmp_silent, fourcc, fps, (crop_s, crop_s))
+    out = cv2.VideoWriter(tmp_silent, fourcc, fps, (out_w, out_h))
     if not out.isOpened():
         raise SystemExit("cannot open VideoWriter")
     fi = 0
@@ -569,11 +764,24 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
         pil = Image.fromarray(rgb)
         phrase = find_active(phrases, t)
         if phrase is not None:
+            # Captions anchor to the SQUARE video region (lower-third of
+            # the square), never to the full canvas, so the banner stays clean.
             pil = draw_caption(pil, phrase, t, font_base, font_big,
                                min_emphasize_len=min_emphasize_len,
                                extra_set=extra_set,
                                enable_emphasize=enable_emphasize)
-        back = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+        if scale != 1.0:
+            pil = pil.resize((crop_s_out, crop_s_out), Image.LANCZOS)
+        if header_px == 0 and footer_px == 0:
+            canvas = pil
+        else:
+            canvas = Image.new("RGB", (out_w, out_h), tuple(bg))
+            if header_bar is not None:
+                canvas.paste(header_bar, (0, 0))
+            canvas.paste(pil, (0, header_px))
+            if footer_bar is not None:
+                canvas.paste(footer_bar, (0, header_px + crop_s_out))
+        back = cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
         out.write(back)
         fi += 1
         if fi % 150 == 0:
@@ -627,6 +835,26 @@ def main():
                     help="face-detect every N frames")
     ap.add_argument("--no-yolo", action="store_true",
                     help="skip YOLO attempt even if ultralytics installed")
+    ap.add_argument("--header-text", default="",
+                    help="persistent banner above the square video, e.g. "
+                         "'Free counseling for life problems - DM us'")
+    ap.add_argument("--aspect", default="square",
+                    help="final canvas: square (720x720 legacy), 4:5 "
+                         "(720x900 IG feed, recommended with --header-text), "
+                         "9:16 (720x1280 Reels/Stories)")
+    ap.add_argument("--header-height", type=int, default=None,
+                    help="override header strip height in crop pixels")
+    ap.add_argument("--footer-height", type=int, default=None,
+                    help="override footer strip height in crop pixels")
+    ap.add_argument("--footer-text", default="",
+                    help="optional line in the 9:16 bottom strip")
+    ap.add_argument("--out-width", type=int, default=None,
+                    help="upscale final canvas width, e.g. 1080 for Instagram "
+                         "(height scales proportionally)")
+    ap.add_argument("--header-bg", default=None,
+                    help="banner background '#rrggbb' or 'r,g,b'")
+    ap.add_argument("--header-fg", default=None,
+                    help="banner text color '#rrggbb' or 'r,g,b'")
     args = ap.parse_args()
 
     video_path = args.video
@@ -672,7 +900,11 @@ def main():
         emphasize_scale=args.emphasize_scale,
         min_emphasize_len=args.min_emphasize_len, extra_set=extra_set,
         enable_emphasize=enable_emphasize,
-        sample_every=args.sample_every, use_yolo=not args.no_yolo)
+        sample_every=args.sample_every, use_yolo=not args.no_yolo,
+        header_text=args.header_text, aspect=args.aspect,
+        header_height=args.header_height, footer_height=args.footer_height,
+        footer_text=args.footer_text, out_width=args.out_width,
+        header_bg=args.header_bg, header_fg=args.header_fg)
 
 
 if __name__ == "__main__":

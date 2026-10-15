@@ -246,9 +246,26 @@ def generate():
                           "text": text})
         words.sort(key=lambda w: w["start"])
         apply_cut_start_capital(video_config.subtitles, words)
-        square_file = f"{video_id}_{start}_{end}_square_captioned.mp4"
+        header_text = request.args.get("header_text", "").strip()
+        aspect = request.args.get("aspect", "4:5" if header_text else "square").strip() or "square"
+        if aspect not in ("square", "1:1", "4:5", "9:16"):
+            return f"Unknown aspect {aspect!r}: expected square, 4:5 or 9:16", 503
+        raw_w = request.args.get("out_width", "").strip()
+        try:
+            if raw_w in ("", "auto"):
+                # Legacy square stays 720px; IG canvases default to 1080 wide.
+                out_width = (None if aspect in ("square", "1:1")
+                             and not header_text else 1080)
+            else:
+                out_width = int(raw_w) or None
+        except ValueError:
+            return "out_width must be a number (e.g. 1080) or empty", 503
+        tag = aspect.replace(":", "x") if aspect not in ("square", "1:1") else "square"
+        square_file = f"{video_id}_{start}_{end}_{tag}_captioned.mp4"
         square_location = os.path.join(SAVED_PATH, square_file)
-        render_captioned_square(out_location, words, square_location)
+        render_captioned_square(out_location, words, square_location,
+                                header_text=header_text, aspect=aspect,
+                                out_width=out_width)
         os.remove(out_location)
     except Exception as ex:
         print(f"Square captioned render failed: {ex}")

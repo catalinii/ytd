@@ -36,6 +36,22 @@ button {
     <label for="{{ s['label'] }}"> {{ s["text"] | safe }} </label>{{s["br"] | safe}}
 {% endfor %}
 <br>
+<label for="header_text"><b>Banner message on top (optional):</b></label><br>
+<input type="text" name="header_text" id="header_text" style="width: 90%;" maxlength="120"
+  placeholder="e.g. Free counseling for life problems — DM us"><br>
+<small>Shown in a persistent strip above the video. Keep it under ~7 words.</small><br><br>
+<label for="aspect"><b>Format:</b></label>
+<select name="aspect" id="aspect">
+  <option value="4:5" selected>Instagram feed 4:5 (recommended with banner)</option>
+  <option value="9:16">Reels / Stories 9:16</option>
+  <option value="square">Square 1:1 (legacy, no banner strip)</option>
+</select>
+<label for="out_width">Width:</label>
+<select name="out_width" id="out_width">
+  <option value="auto" selected>Auto (1080 for IG, 720 for square)</option>
+  <option value="1080">1080 (Instagram)</option>
+  <option value="720">720 (smaller file)</option>
+</select><br>
 <input type="hidden" name="video" value="{{ video_id }}"><br><br><b><input type="submit" value="Generate"></b>
 </form>
 </p>
