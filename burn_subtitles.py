@@ -162,8 +162,30 @@ def active_word_index(phrase, t):
 
 # ------------------------------------------------------- speaker tracking
 
-def detect_centers_haar(video_path, sample_every=5):
-    """Return (centers_or_None per sampled frame, sample_indices, n_frames, w, h, fps)."""
+def select_anchored_cx(centers, anchor_x, anchor_tol=300):
+    """Pick the detection center closest to anchor_x, or None.
+
+    Returns None when there are no centers or the closest one is
+    farther than anchor_tol from the anchor (only the wrong person
+    is visible in this frame).
+    """
+    if not centers:
+        return None
+    cx = min(centers, key=lambda c: abs(c - anchor_x))
+    return cx if abs(cx - anchor_x) <= anchor_tol else None
+
+
+def detect_centers_haar(video_path, sample_every=5, anchor_x=None,
+                        anchor_tol=300):
+    """Return (centers_or_None per sampled frame, sample_indices, n_frames, w, h, fps).
+
+    anchor_x: when set, each sampled frame picks the detected face whose
+      center is closest to anchor_x (locks onto one speaker when several
+      faces are visible) instead of the largest face. A pick farther than
+      anchor_tol from the anchor is rejected (None) so frames where only
+      the wrong person is detected don't yank the pan away; gaps are
+      filled from neighboring good frames downstream.
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise SystemExit(f"cannot open {video_path}")
@@ -188,6 +210,10 @@ def detect_centers_haar(video_path, sample_every=5):
             gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
         if len(faces) == 0:
             raw.append(None)
+        elif anchor_x is not None:
+            # face closest to the anchor = locked speaker
+            centers = [float(x + fw / 2.0) for (x, y, fw, fh) in faces]
+            raw.append(select_anchored_cx(centers, anchor_x, anchor_tol))
         else:
             # largest face = speaker
             x, y, fw, fh = max(faces, key=lambda b: b[2] * b[3])
@@ -196,8 +222,14 @@ def detect_centers_haar(video_path, sample_every=5):
     return raw, idxs, n, w, h, float(fps)
 
 
-def try_yolo_centers(video_path, sample_every=5):
-    """Try ultralytics YOLOv8 person tracking. Returns list or None."""
+def try_yolo_centers(video_path, sample_every=5, anchor_x=None,
+                      anchor_tol=300):
+    """Try ultralytics YOLOv8 person tracking. Returns list or None.
+
+    anchor_x: when set, each sampled frame picks the person box whose
+      center is closest to anchor_x instead of the largest box. A pick
+      farther than anchor_tol from the anchor is rejected (None).
+    """
     try:
         from ultralytics import YOLO
     except Exception as e:
@@ -219,18 +251,27 @@ def try_yolo_centers(video_path, sample_every=5):
                 raw.append(None)
                 continue
             res = model.predict(frame, classes=[0], verbose=False, conf=0.4)
-            best = None
-            best_area = 0
+            boxes = []
             for r in res:
                 if r.boxes is None:
                     continue
-                for b in r.boxes:
+                boxes.extend(r.boxes)
+            if not boxes:
+                raw.append(None)
+                continue
+            if anchor_x is not None:
+                centers = [(float(b.xyxy[0][0]) + float(b.xyxy[0][2])) / 2.0
+                           for b in boxes]
+                raw.append(select_anchored_cx(centers, anchor_x, anchor_tol))
+            else:
+                best, best_area = None, 0
+                for b in boxes:
                     x1, y1, x2, y2 = [float(v) for v in b.xyxy[0].tolist()]
                     area = (x2 - x1) * (y2 - y1)
                     if area > best_area:
                         best_area = area
                         best = (x1 + x2) / 2.0
-            raw.append(best)
+                raw.append(best)
         cap.release()
         n_det = sum(1 for v in raw if v is not None)
         print(f"[track] YOLO detections: {n_det}/{len(raw)}", flush=True)
@@ -657,7 +698,9 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
                             use_yolo=False, header_text="", aspect="square",
                             header_height=None, footer_height=None,
                             footer_text="", out_width=None,
-                            header_bg=None, header_fg=None):
+                            header_bg=None, header_fg=None,
+                            fixed_x0=None, anchor_x=260,
+                            anchor_tol=300):
     """Burn karaoke captions into a 1:1 speaker-following crop.
 
     video_path: cut clip to process (audio is muxed from here).
@@ -676,6 +719,14 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
     out_width: upscale final canvas width (e.g. 1080 for Instagram).
       Height scales proportionally. None = keep crop width (720).
     header_bg/header_fg: banner colors as "#rrggbb" or "r,g,b".
+    fixed_x0: lock the square crop at this left edge (no pan). None follows
+      the speaker. Clamped to [0, frame_w - crop_s].
+    anchor_x: when following, lock onto the face/person closest to this
+      x instead of the largest one, so the pan never jumps to another
+      person. Detections farther than anchor_tol from the anchor are
+      rejected. Defaults to 260 (left-of-center speaker in 1280x720
+      sermon footage); pass None for largest-face tracking. Ignored
+      when fixed_x0 is set.
     Returns output_path. Raises ValueError/SystemExit on failure.
     """
     if not words:
@@ -688,22 +739,42 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
     print(f"[info] {len(phrases)} caption phrases (max {max_words} words each)",
           flush=True)
 
-    raw_yolo = try_yolo_centers(video_path, sample_every) if use_yolo else None
-    raw, idxs, n_frames, W, H, fps = detect_centers_haar(
-        video_path, sample_every)
-    if raw_yolo is not None and len(raw_yolo) == len(raw):
-        # fuse: prefer YOLO person center, fall back to Haar face
-        raw = [y if y is not None else h for y, h in zip(raw_yolo, raw)]
-        print("[track] fused YOLO person + Haar face", flush=True)
-    n_det = sum(1 for v in raw if v is not None)
-    print(f"[track] Haar face detections: {n_det}/{len(raw)} over {n_frames} frames "
-          f"({W}x{H} @ {fps:.1f}fps)", flush=True)
+    if fixed_x0 is not None:
+        # locked crop: no face detection, no pan
+        probe = cv2.VideoCapture(video_path)
+        if not probe.isOpened():
+            raise SystemExit(f"cannot open {video_path}")
+        n_frames = int(probe.get(cv2.CAP_PROP_FRAME_COUNT))
+        W = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH))
+        H = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = float(probe.get(cv2.CAP_PROP_FPS) or 30.0)
+        probe.release()
+        crop_s = min(W, H)
+        fx = max(0, min(int(fixed_x0), W - crop_s))
+        x0_traj = np.full(n_frames, fx, dtype=int)
+        print(f"[track] FIXED crop {crop_s}x{crop_s} at x0={fx} "
+              f"({W}x{H} @ {fps:.1f}fps, no pan)", flush=True)
+    else:
+        raw_yolo = try_yolo_centers(video_path, sample_every, anchor_x,
+                                     anchor_tol) if use_yolo else None
+        raw, idxs, n_frames, W, H, fps = detect_centers_haar(
+            video_path, sample_every, anchor_x, anchor_tol)
+        if anchor_x is not None:
+            print(f"[track] anchored to x={anchor_x} (nearest face within "
+                  f"+/-{anchor_tol}px wins)", flush=True)
+        if raw_yolo is not None and len(raw_yolo) == len(raw):
+            # fuse: prefer YOLO person center, fall back to Haar face
+            raw = [y if y is not None else h for y, h in zip(raw_yolo, raw)]
+            print("[track] fused YOLO person + Haar face", flush=True)
+        n_det = sum(1 for v in raw if v is not None)
+        print(f"[track] Haar face detections: {n_det}/{len(raw)} over {n_frames} frames "
+              f"({W}x{H} @ {fps:.1f}fps)", flush=True)
 
-    crop_s = min(W, H)
-    x0_traj = build_crop_trajectory(n_frames, W, crop_s, raw, idxs,
-                                    sample_every)
-    print(f"[track] square crop {crop_s}x{crop_s}, x0 range "
-          f"[{int(x0_traj.min())},{int(x0_traj.max())}]", flush=True)
+        crop_s = min(W, H)
+        x0_traj = build_crop_trajectory(n_frames, W, crop_s, raw, idxs,
+                                        sample_every)
+        print(f"[track] square crop {crop_s}x{crop_s}, x0 range "
+              f"[{int(x0_traj.min())},{int(x0_traj.max())}]", flush=True)
 
     bg = parse_hex_color(header_bg, DEFAULT_HEADER_BG)
     fg = parse_hex_color(header_fg, DEFAULT_HEADER_FG)
@@ -809,7 +880,7 @@ def render_captioned_square(video_path, words, output_path, max_words=4,
 
 # ------------------------------------------------------------------ main
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser(description="1:1 speaker-follow + karaoke captions")
     ap.add_argument("--video", default="/root/saved/data/wsoS7Dy19vQ_4024.7_4060.54.mp4")
     ap.add_argument("--video-id", default="wsoS7Dy19vQ")
@@ -855,7 +926,24 @@ def main():
                     help="banner background '#rrggbb' or 'r,g,b'")
     ap.add_argument("--header-fg", default=None,
                     help="banner text color '#rrggbb' or 'r,g,b'")
-    args = ap.parse_args()
+    ap.add_argument("--fixed-x0", type=int, default=None,
+                    help="lock square crop at this left edge (no pan); "
+                         "0=left edge, e.g. 560=right edge for 1280x720")
+    ap.add_argument("--anchor-x", type=float, default=260,
+                    help="keep following, but lock onto the face/person "
+                         "closest to this x so the pan never jumps to "
+                         "another person (default: 260, the left speaker; "
+                         "use 1160 for the right person)")
+    ap.add_argument("--anchor-tol", type=float, default=300,
+                    help="reject --anchor-x detections farther than this "
+                         "many px from the anchor (default: 300)")
+    ap.add_argument("--no-anchor", action="store_true",
+                    help="disable anchor lock, restore largest-face tracking")
+    return ap
+
+
+def main():
+    args = build_parser().parse_args()
 
     video_path = args.video
     if not os.path.exists(video_path):
@@ -904,7 +992,10 @@ def main():
         header_text=args.header_text, aspect=args.aspect,
         header_height=args.header_height, footer_height=args.footer_height,
         footer_text=args.footer_text, out_width=args.out_width,
-        header_bg=args.header_bg, header_fg=args.header_fg)
+        header_bg=args.header_bg, header_fg=args.header_fg,
+        fixed_x0=args.fixed_x0,
+        anchor_x=None if args.no_anchor else args.anchor_x,
+        anchor_tol=args.anchor_tol)
 
 
 if __name__ == "__main__":
